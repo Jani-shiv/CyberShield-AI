@@ -6,6 +6,8 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 import validators
+import dns.resolver
+
 
 class VulnerabilityScanner:
     def __init__(self, target_url):
@@ -56,8 +58,11 @@ class VulnerabilityScanner:
 
         # 7. TCP Port Scanner
         self.scan_ports()
-
-        # 8. Compute total risk
+        
+        # 8. Check DNS Email Spoofing vulnerability (Phishing resilience)
+        self.check_dns_phishing_vulnerabilities()
+ 
+        # 9. Compute total risk
         self.compute_risk_score()
 
         return {
@@ -283,7 +288,12 @@ class VulnerabilityScanner:
                     pass
 
     def enumerate_directories(self):
-        common_paths = ['/admin', '/login', '/dashboard', '/config', '/backup', '/.git', '/wp-admin', '/phpmyadmin']
+        common_paths = [
+            '/admin', '/login', '/dashboard', '/config', '/backup', 
+            '/.git', '/wp-admin', '/phpmyadmin', '/admin-console', 
+            '/controlpanel', '/dbadmin', '/jenkins/', '/actuator/env', 
+            '/.env', '/config.json', '/backup.zip', '/settings.py'
+        ]
         for path in common_paths:
             check_url = urllib.parse.urljoin(self.target_url, path)
             try:
@@ -292,7 +302,7 @@ class VulnerabilityScanner:
                 if resp.status_code in [200, 301, 302, 403]:
                     self.vulns_found.append({
                         'type': 'Sensitive Directory/File Exposed',
-                        'severity': 'Low' if resp.status_code in [403] else 'Medium',
+                        'severity': 'High' if any(crit in path for crit in ['.env', 'config.json', 'backup', 'settings.py']) else ('Low' if resp.status_code in [403] else 'Medium'),
                         'endpoint': check_url,
                         'description': f"Exposed endpoint '{path}' returned status code {resp.status_code}.",
                         'remediation': 'Restrict path access using server-level configurations. Disable directory browsing and set proper authorization policies.'
@@ -346,6 +356,57 @@ class VulnerabilityScanner:
                 'risk': risk
             })
             sock.close()
+
+    def check_dns_phishing_vulnerabilities(self):
+        spf_present = False
+        dmarc_present = False
+        
+        # 1. Check SPF TXT configuration
+        try:
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = 2.0
+            resolver.lifetime = 2.0
+            txt_records = resolver.resolve(self.domain, 'TXT')
+            for record in txt_records:
+                txt_content = record.to_text().strip('"')
+                if txt_content.startswith('v=spf1'):
+                    spf_present = True
+                    break
+        except Exception:
+            pass
+
+        # 2. Check DMARC TXT configuration
+        try:
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = 2.0
+            resolver.lifetime = 2.0
+            dmarc_records = resolver.resolve(f'_dmarc.{self.domain}', 'TXT')
+            for record in dmarc_records:
+                txt_content = record.to_text().strip('"')
+                if txt_content.startswith('v=DMARC1'):
+                    dmarc_present = True
+                    break
+        except Exception:
+            pass
+
+        # If security parameters are missing, flag as email spoofing/phishing vulnerability
+        if not spf_present:
+            self.vulns_found.append({
+                'type': 'Missing SPF Email Authentication',
+                'severity': 'High',
+                'endpoint': f'DNS: TXT @ {self.domain}',
+                'description': 'No Sender Policy Framework (SPF) record found. Attackers can forge emails impersonating this domain.',
+                'remediation': 'Publish a TXT record in your DNS settings mapping authorized outgoing mail servers (e.g. v=spf1 include:_spf.google.com ~all).'
+            })
+            
+        if not dmarc_present:
+            self.vulns_found.append({
+                'type': 'Missing DMARC Spoofing Protection',
+                'severity': 'High',
+                'endpoint': f'DNS: TXT @ _dmarc.{self.domain}',
+                'description': 'No DMARC protection record was found. Impersonated phishing emails can easily bypass filters and reach user inboxes.',
+                'remediation': 'Publish a DMARC TXT configuration record (e.g., v=DMARC1; p=quarantine; rua=mailto:security@domain.com) to instruct mail servers on spoofing actions.'
+            })
 
     def compute_risk_score(self):
         # Start at 0 risk score
