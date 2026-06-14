@@ -1,0 +1,23 @@
+FROM python:3.10-slim
+
+# Install system dependencies (e.g. nmap for port scan fallback support, build-essential)
+RUN apt-get update && apt-get install -y \
+    nmap \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirement files first for cache layer optimization
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend files
+COPY backend /app/backend
+
+EXPOSE 5000
+
+ENV FLASK_APP=backend/app.py
+ENV FLASK_ENV=development
+
+CMD ["python", "backend/app.py"]
