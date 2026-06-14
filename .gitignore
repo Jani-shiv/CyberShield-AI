@@ -1,0 +1,27 @@
+# Virtual Environments
+venv/
+ENV/
+env/
+.venv/
+bin/
+include/
+lib/
+share/
+
+# Node Modules
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Databases & Local Logs
+*.db
+backend/database.db
+*.log
+backend/reports/*.pdf
+
+# IDEs & System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
